@@ -2,3 +2,5 @@ third_party
 build
 build-*
 *~
+.idea
+cmake-build-debug/
