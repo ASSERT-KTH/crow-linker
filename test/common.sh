@@ -2,8 +2,7 @@ function get_variants(){
   NAME=$1
   FOLDER=$2
 
-  ORIGINAL=$FOLDER/$NAME.original.bc
-  VARIANTS=($(find $FOLDER -name "$NAME\_*.bc"))
+  VARIANTS=($(find "$FOLDER" -name "*_\[*.bc"))
 }
 
 function check4functions(){
@@ -12,18 +11,18 @@ function check4functions(){
 
   DATAF="data.txt"
   echo -n "" > $DATAF
-  for l in $(llvm-nm $ORIGINAL | grep -E " T " | awk '{print $3}') # Get defined functions in original
+  for l in $(llvm-nm "$ORIGINAL" | grep -E " T " | awk '{print $3}') # Get defined functions in original
   do
     # check for this function in variants
-    llvm-extract --func=$l $ORIGINAL -o t.bc
-    echo -n $l " " $ORIGINAL " " >> $DATAF
+    llvm-extract --func=$l "$ORIGINAL" -o t.bc
+    echo -n $l " " "$ORIGINAL" " " >> $DATAF
     md5sum t.bc | awk '{print $1}' >> $DATAF
 
     for v in ${VARIANTS[@]}
     do
 
-      llvm-extract --func=$l $v -o t.bc
-      echo -n $l " " $v " " >> $DATAF
+      llvm-extract --func=$l "$v" -o t.bc
+      echo -n $l " " "$v" " " >> $DATAF
       md5sum t.bc | awk '{print $1}' >> $DATAF
       llvm-dis t.bc -o t.ll
 

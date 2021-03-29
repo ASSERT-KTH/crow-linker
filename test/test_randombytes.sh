@@ -2,22 +2,19 @@
 source common.sh
 
 
-get_variants "argon2" "bcs"
+get_variants "$1" "$2"
 
-echo $FUNCTIONS $UNIQUE_VARIANTS
-
-check4functions $ORIGINAL ${VARIANTS[@]}
+check4functions "$1" "${VARIANTS[@]}"
 
 
 if [[ $UNIQUE_VARIANTS ]]
 then
 
-  echo $FUNCTIONS $UNIQUE_VARIANTS
-  ../build/crow-linker $ORIGINAL t.bc --override -crow-merge-debug-level=2 -crow-merge-skip-on-error -crow-merge-bitcodes="$UNIQUE_VARIANTS" -crow-merge-functions="$FUNCTIONS"
+  echo $FUNCTIONS
+  echo "======"
+  ../build/crow-linker $ORIGINAL out.bc --override -crow-merge-debug-level=1 -crow-merge-skip-on-error -crow-merge-bitcodes="$UNIQUE_VARIANTS" -crow-merge-functions="$FUNCTIONS" 2>err.log
 
-  llvm-dis t.bc
 
-  rm t.bc
   else
     echo "No different variant found"
 fi

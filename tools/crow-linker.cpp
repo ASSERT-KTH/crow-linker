@@ -93,8 +93,10 @@ static void deinternalize_module(Module &M, bool saveBackup=false){
     }
 }
 
+static std::set<size_t> moduleFunctionHashes;
+static std::hash<std::string> hasher;
 
-static bool is_same_func(std::string original_function, std::string function_name, std::string module_file){
+static bool is_same_func(std::string function_name, std::string module_file, bool saveIfNotIn=true){
 
     LLVMContext context;
     SMDiagnostic error;
@@ -108,7 +110,18 @@ static bool is_same_func(std::string original_function, std::string function_nam
     llvm::raw_string_ostream fObjectDumpSS(fObjectDump);
     fObjectDumpSS << *fObject;
 
-    return original_function.compare(fObjectDump) == 0;
+    size_t hash = hasher(fObjectDump);
+
+    if(moduleFunctionHashes.count(hash)){ // Already exist
+        return true;
+    }
+
+    if(DebugLevel > 1) {
+        errs() << "Saving variant for " << function_name << " " << module_file << " hash " << hash << "\n";
+    }
+
+    moduleFunctionHashes.insert(hash);
+    return false;
 }
 
 static void restore_linkage(Module &M){
@@ -142,11 +155,21 @@ int main(int argc, const char **argv) {
     Linker linker(*bitcode);
 
     if(DebugLevel > 1) {
-        errs() << "modules count " << BCFiles.size() << "\n";
-        errs() << "function count " << FunctionNames.size() << "\n";
+        errs() << "Modules count " << BCFiles.size() << "\n";
+        errs() << "Function count " << FunctionNames.size() << "\n";
     }
     // Deinternalize functions
     deinternalize_module(*bitcode, /*save linkage as backup*/ true);
+
+    //
+    if(DebugLevel > 1) {
+        errs() << "Hashing original functions" << BCFiles.size() << "\n";
+    }
+
+    for(auto &F: *bitcode){
+        is_same_func(F.getName().str(), InputFilename);
+    }
+
     // Set override flag
     unsigned Flags = Linker::Flags::None;
 
@@ -173,11 +196,13 @@ int main(int argc, const char **argv) {
         deinternalize_module(*toMergeModule);
         for(auto &fname : FunctionNames){
 
-
             if(DebugLevel > 1)
                 errs() << "Parsing " << module << "\n";
 
             auto fObject = toMergeModule->getFunction(fname);
+
+            if(fObject->isDeclaration())
+                continue;
 
             if(!fObject){
 
@@ -200,15 +225,9 @@ int main(int argc, const char **argv) {
                 if(DebugLevel > 1)
                     errs() << "\t Cheking for identical function" << "\n";
 
-                auto original = bitcode->getFunction(fname);
+                if(is_same_func(fname, module)){
 
-                std::string originalDump;
-                llvm::raw_string_ostream originalDumpSS(originalDump);
-                originalDumpSS << *original;
-
-                if(is_same_func(originalDump, fname, module)){
-
-                    if(DebugLevel > 1)
+                    if(DebugLevel > 0)
                         errs() << "\t Removing identical function " << fname << " in " << module << "\n";
 
                     continue;
