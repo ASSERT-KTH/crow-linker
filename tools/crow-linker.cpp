@@ -118,9 +118,10 @@ int main(int argc, const char **argv) {
 
     Linker linker(*bitcode);
 
-    errs() << "modules count " << BCFiles.size() << "\n";
-    errs() << "function count " << FunctionNames.size() << "\n";
-
+    if(DebugLevel > 1) {
+        errs() << "modules count " << BCFiles.size() << "\n";
+        errs() << "function count " << FunctionNames.size() << "\n";
+    }
     // Deinternalize functions
     deinternalize_module(*bitcode, /*save linkage as backup*/ true);
     // Set override flag
@@ -133,7 +134,9 @@ int main(int argc, const char **argv) {
     for(auto &module: BCFiles) {
 
         if (!exists(module)) {
-            errs() << "Module " << module << " does not exist\n";
+
+            if(DebugLevel > 1)
+                errs() << "Module " << module << " does not exist\n";
 
             if (!SkipOnError) {
                 llvm::report_fatal_error("Module " + module + " not found !");
@@ -148,12 +151,15 @@ int main(int argc, const char **argv) {
         for(auto &fname : FunctionNames){
 
 
-            errs() << "Parsing " << module << "\n";
+            if(DebugLevel > 1)
+                errs() << "Parsing " << module << "\n";
 
             auto fObject = toMergeModule->getFunction(fname);
 
             if(!fObject){
-                errs() << "\tFunction " << fname << " does not exist\n";
+
+                if(DebugLevel > 1)
+                    errs() << "\tFunction " << fname << " does not exist\n";
 
                 if(!SkipOnError){
                     llvm::report_fatal_error("\tFunction " + fname + " not found !");
@@ -162,7 +168,8 @@ int main(int argc, const char **argv) {
                 continue; // continue since the function does not exist
             }
 
-            errs() << "\tMerging function " << fname << "\n";
+            if(DebugLevel > 1)
+                errs() << "\tMerging function " << fname << "\n";
 
             std::string newName;
             llvm::raw_string_ostream newNameOutput(newName);
@@ -175,10 +182,14 @@ int main(int argc, const char **argv) {
             // Change function name
             fObject->setName(newName);
 
-            errs() << "Ready to merge " << newNameOutput.str() << "\n";
+            if(DebugLevel > 2)
+                errs() << "Ready to merge " << newNameOutput.str() << "\n";
 
             linker.linkInModule(std::move(toMergeModule), Flags);
-            errs() << "Done " << newNameOutput.str() << "\n";
+            if(DebugLevel > 2)
+                errs() << "Done " << newNameOutput.str() << "\n";
+
+            outs() << newName << "\n";
         }
 
         modulesCount++;
