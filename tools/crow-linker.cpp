@@ -118,7 +118,12 @@ static bool is_same_func(std::string function_name, std::string module_file, boo
 
     if(DebugLevel > 1) {
         errs() << "Saving variant for " << function_name << " " << module_file << " hash " << hash << "\n";
+
+        if(DebugLevel > 4){
+            errs() << fObjectDump << "\n";
+        }
     }
+
 
     moduleFunctionHashes.insert(hash);
     return false;
@@ -191,7 +196,7 @@ int main(int argc, const char **argv) {
             continue; // continue since the module does not exist
         }
 
-        auto toMergeModule = parseIRFile(InputFilename, error, context);
+        auto toMergeModule = parseIRFile(module, error, context);
 
         deinternalize_module(*toMergeModule);
         for(auto &fname : FunctionNames){
