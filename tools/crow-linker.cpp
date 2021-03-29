@@ -68,15 +68,42 @@ inline bool exists (const std::string& name) {
     return (stat (name.c_str(), &buffer) == 0);
 }
 
-static void deinternalize_module(Module &M){
+static std::map<std::string, GlobalValue::LinkageTypes> backupLinkage4Functions;
+static std::map<std::string, GlobalValue::LinkageTypes> backupLinkage4Globals;
+
+
+static void deinternalize_module(Module &M, bool saveBackup=false){
     // For functions
     for(auto &F: M){
+        if(saveBackup)
+            backupLinkage4Functions[F.getName().str()] = F.getLinkage();
         F.setLinkage(GlobalValue::CommonLinkage);
     }
 
     // For globals
     for(auto &G: M.globals()){
+
+        if(saveBackup)
+            backupLinkage4Globals[G.getName().str()] = G.getLinkage();
+
         G.setLinkage(GlobalValue::CommonLinkage);
+    }
+}
+
+
+static void restore_linkage(Module &M){
+
+    // For functions
+    for(auto &F: M){
+        if(backupLinkage4Functions.count(F.getName().str()))
+            F.setLinkage(backupLinkage4Functions[F.getName().str()]);
+    }
+
+    // For globals
+    for(auto &G: M.globals()){
+
+        if(backupLinkage4Globals.count(G.getName().str()))
+            G.setLinkage(backupLinkage4Globals[G.getName().str()]);
     }
 }
 
@@ -95,7 +122,7 @@ int main(int argc, const char **argv) {
     errs() << "function count " << FunctionNames.size() << "\n";
 
     // Deinternalize functions
-    deinternalize_module(*bitcode);
+    deinternalize_module(*bitcode, /*save linkage as backup*/ true);
     // Set override flag
     unsigned Flags = Linker::Flags::None;
 
@@ -136,11 +163,16 @@ int main(int argc, const char **argv) {
             }
 
             errs() << "\tMerging function " << fname << "\n";
-            // Change function name
 
             std::string newName;
             llvm::raw_string_ostream newNameOutput(newName);
             newNameOutput << fname << "_" << modulesCount << FuncSufix;
+
+            // Check if the function has a special linkage
+            if(backupLinkage4Functions.count(fObject->getName().str())) // Set the nw function type as the original
+                backupLinkage4Functions[newName] = backupLinkage4Functions[fObject->getName().str()];
+
+            // Change function name
             fObject->setName(newName);
 
             errs() << "Ready to merge " << newNameOutput.str() << "\n";
@@ -151,6 +183,9 @@ int main(int argc, const char **argv) {
 
         modulesCount++;
     }
+
+    // Restore initial function and global linkage
+    restore_linkage(*bitcode);
 
     std::error_code EC;
     llvm::raw_fd_ostream OS(OutFileName, EC, llvm::sys::fs::F_None);
