@@ -51,6 +51,9 @@ static cl::opt<bool> SkipOnError(
         cl::init(false));
 
 
+static cl::opt<bool>
+        Override("override", cl::desc("Override symbols"), cl::init(false));
+
 static cl::opt<unsigned> DebugLevel(
         "crow-merge-debug-level",
         cl::desc("Pass devbug level, 0 for none"),
@@ -61,6 +64,10 @@ static unsigned modulesCount = 0;
 inline bool exists (const std::string& name) {
     struct stat buffer;
     return (stat (name.c_str(), &buffer) == 0);
+}
+
+static void deinternalize_module(Module &M){
+
 }
 
 int main(int argc, const char **argv) {
@@ -76,6 +83,15 @@ int main(int argc, const char **argv) {
 
     errs() << "modules count " << BCFiles.size() << "\n";
     errs() << "function count " << FunctionNames.size() << "\n";
+
+    // Deinternalize functions
+    deinternalize_module(*bitcode);
+    // Set override flag
+    unsigned Flags = Linker::Flags::None;
+
+    if(Override)
+        Flags |=  Linker::Flags::OverrideFromSrc;
+
 
     for(auto &module: BCFiles) {
 
@@ -109,9 +125,17 @@ int main(int argc, const char **argv) {
             }
 
             errs() << "Merging function " << fname << "\n";
-
-
             // Change function name
+
+            std::string newName;
+            llvm::raw_string_ostream newNameOutput(newName);
+            newNameOutput << fname << "_" << modulesCount << FuncSufix;
+            fObject->setName(newNameOutput.str());
+
+            errs() << newNameOutput.str() << "\n";
+
+            // Link new function
+            linker.linkInModule(std::move(toMergeModule), Flags);
         }
 
         modulesCount++;
