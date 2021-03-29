@@ -1,0 +1,82 @@
+; Function Attrs: nounwind
+define common hidden i32 @argon2_ctx(%struct.Argon2_Context* %0, i32 %1) local_unnamed_addr #0 {
+  %3 = alloca %struct.Argon2_instance_t, align 4
+  %4 = tail call i32 @argon2_validate_inputs(%struct.Argon2_Context* %0) #7
+  %5 = bitcast %struct.Argon2_instance_t* %3 to i8*
+  call void @llvm.lifetime.start.p0i8(i64 44, i8* nonnull %5) #7
+  %6 = icmp eq i32 %4, 0
+  br i1 %6, label %7, label %53
+
+7:                                                ; preds = %2
+  %8 = add i32 %1, -1
+  %9 = icmp ugt i32 %8, 1
+  br i1 %9, label %53, label %10
+
+10:                                               ; preds = %7
+  %11 = getelementptr inbounds %struct.Argon2_Context, %struct.Argon2_Context* %0, i32 0, i32 11
+  %12 = load i32, i32* %11, align 4
+  %13 = getelementptr inbounds %struct.Argon2_Context, %struct.Argon2_Context* %0, i32 0, i32 12
+  %14 = load i32, i32* %13, align 4
+  %15 = or i32 %14, %14
+  %16 = add i32 %14, %15
+  %17 = add i32 %14, %16
+  %18 = add i32 %14, %17
+  %19 = add i32 %14, %18
+  %20 = add i32 %14, %19
+  %21 = add i32 %14, %20
+  %22 = add i32 %14, %21
+  %23 = icmp ult i32 %12, %22
+  %24 = select i1 %23, i32 %22, i32 %12
+  %25 = shl i32 %14, 2
+  %26 = udiv i32 %24, %25
+  %27 = mul i32 %26, %25
+  %28 = getelementptr inbounds %struct.Argon2_instance_t, %struct.Argon2_instance_t* %3, i32 0, i32 0
+  store %struct.block_region_* null, %struct.block_region_** %28, align 4
+  %29 = getelementptr inbounds %struct.Argon2_Context, %struct.Argon2_Context* %0, i32 0, i32 10
+  %30 = load i32, i32* %29, align 4
+  %31 = getelementptr inbounds %struct.Argon2_instance_t, %struct.Argon2_instance_t* %3, i32 0, i32 2
+  store i32 %30, i32* %31, align 4
+  %32 = getelementptr inbounds %struct.Argon2_instance_t, %struct.Argon2_instance_t* %3, i32 0, i32 3
+  store i32 -1, i32* %32, align 4
+  %33 = getelementptr inbounds %struct.Argon2_instance_t, %struct.Argon2_instance_t* %3, i32 0, i32 4
+  store i32 %27, i32* %33, align 4
+  %34 = getelementptr inbounds %struct.Argon2_instance_t, %struct.Argon2_instance_t* %3, i32 0, i32 5
+  store i32 %26, i32* %34, align 4
+  %35 = shl i32 %26, 2
+  %36 = getelementptr inbounds %struct.Argon2_instance_t, %struct.Argon2_instance_t* %3, i32 0, i32 6
+  store i32 %35, i32* %36, align 4
+  %37 = getelementptr inbounds %struct.Argon2_instance_t, %struct.Argon2_instance_t* %3, i32 0, i32 7
+  store i32 %14, i32* %37, align 4
+  %38 = getelementptr inbounds %struct.Argon2_Context, %struct.Argon2_Context* %0, i32 0, i32 13
+  %39 = load i32, i32* %38, align 4
+  %40 = getelementptr inbounds %struct.Argon2_instance_t, %struct.Argon2_instance_t* %3, i32 0, i32 8
+  store i32 %39, i32* %40, align 4
+  %41 = getelementptr inbounds %struct.Argon2_instance_t, %struct.Argon2_instance_t* %3, i32 0, i32 9
+  store i32 %1, i32* %41, align 4
+  %42 = call i32 @argon2_initialize(%struct.Argon2_instance_t* nonnull %3, %struct.Argon2_Context* %0) #7
+  %43 = icmp eq i32 %42, 0
+  br i1 %43, label %44, label %53
+
+44:                                               ; preds = %10
+  %45 = load i32, i32* %31, align 4
+  %46 = icmp eq i32 %45, 0
+  br i1 %46, label %52, label %47
+
+47:                                               ; preds = %44, %47
+  %48 = phi i32 [ %49, %47 ], [ 0, %44 ]
+  call void @argon2_fill_memory_blocks(%struct.Argon2_instance_t* nonnull %3, i32 %48) #7
+  %49 = add nuw i32 %48, 1
+  %50 = load i32, i32* %31, align 4
+  %51 = icmp ult i32 %49, %50
+  br i1 %51, label %47, label %52
+
+52:                                               ; preds = %47, %44
+  call void @argon2_finalize(%struct.Argon2_Context* %0, %struct.Argon2_instance_t* nonnull %3) #7
+  br label %53
+
+53:                                               ; preds = %10, %7, %2, %52
+  %54 = phi i32 [ 0, %52 ], [ %4, %2 ], [ -26, %7 ], [ %42, %10 ]
+  call void @llvm.lifetime.end.p0i8(i64 44, i8* nonnull %5) #7
+  ret i32 %54
+}
+

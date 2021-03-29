@@ -56,6 +56,9 @@ static cl::opt<bool> SkipOnError(
 static cl::opt<bool>
         Override("override", cl::desc("Override symbols"), cl::init(false));
 
+static cl::opt<bool>
+        InjectOnlyIfDifferent("merge-only-if-different", cl::desc("Add new function only if it is different to the original one"), cl::init(true));
+
 static cl::opt<unsigned> DebugLevel(
         "crow-merge-debug-level",
         cl::desc("Pass devbug level, 0 for none"),
@@ -91,6 +94,23 @@ static void deinternalize_module(Module &M, bool saveBackup=false){
 }
 
 
+static bool is_same_func(std::string original_function, std::string function_name, std::string module_file){
+
+    LLVMContext context;
+    SMDiagnostic error;
+
+    auto module = parseIRFile(module_file, error, context);
+
+    auto fObject = module->getFunction(function_name);
+    deinternalize_module(*module);
+
+    std::string fObjectDump;
+    llvm::raw_string_ostream fObjectDumpSS(fObjectDump);
+    fObjectDumpSS << *fObject;
+
+    return original_function.compare(fObjectDump) == 0;
+}
+
 static void restore_linkage(Module &M){
 
     // For functions
@@ -108,6 +128,9 @@ static void restore_linkage(Module &M){
 }
 
 int main(int argc, const char **argv) {
+
+    // General stats
+    unsigned added = 0;
 
     cl::ParseCommandLineOptions(argc, argv);
 
@@ -171,6 +194,28 @@ int main(int argc, const char **argv) {
             if(DebugLevel > 1)
                 errs() << "\tMerging function " << fname << "\n";
 
+
+            if(InjectOnlyIfDifferent){
+
+                if(DebugLevel > 1)
+                    errs() << "\t Cheking for identical function" << "\n";
+
+                auto original = bitcode->getFunction(fname);
+
+                std::string originalDump;
+                llvm::raw_string_ostream originalDumpSS(originalDump);
+                originalDumpSS << *original;
+
+                if(is_same_func(originalDump, fname, module)){
+
+                    if(DebugLevel > 1)
+                        errs() << "\t Removing identical function " << fname << " in " << module << "\n";
+
+                    continue;
+                }
+
+            }
+
             std::string newName;
             llvm::raw_string_ostream newNameOutput(newName);
             newNameOutput << fname << "_" << modulesCount << FuncSufix;
@@ -185,12 +230,11 @@ int main(int argc, const char **argv) {
             if(DebugLevel > 2)
                 errs() << "Ready to merge " << newNameOutput.str() << "\n";
 
-            linker.linkInModule(std::move(toMergeModule), Flags);
-            if(DebugLevel > 2)
-                errs() << "Done " << newNameOutput.str() << "\n";
-
             outs() << newName << "\n";
+            added++;
         }
+
+        linker.linkInModule(std::move(toMergeModule), Flags);
 
         modulesCount++;
     }
@@ -202,6 +246,8 @@ int main(int argc, const char **argv) {
     llvm::raw_fd_ostream OS(OutFileName, EC, llvm::sys::fs::F_None);
     WriteBitcodeToFile(*bitcode, OS);
     OS.flush();
+
+    errs() << "Added functions " << added << "\n";
 
     return 0;
 }
