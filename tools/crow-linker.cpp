@@ -25,6 +25,8 @@
 #include <llvm/IRReader/IRReader.h>
 #include <sys/stat.h>
 #include "llvm/Bitcode/BitcodeWriter.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 using namespace llvm;
 
@@ -67,7 +69,15 @@ inline bool exists (const std::string& name) {
 }
 
 static void deinternalize_module(Module &M){
+    // For functions
+    for(auto &F: M){
+        F.setLinkage(GlobalValue::CommonLinkage);
+    }
 
+    // For globals
+    for(auto &G: M.globals()){
+        G.setLinkage(GlobalValue::CommonLinkage);
+    }
 }
 
 int main(int argc, const char **argv) {
@@ -107,6 +117,7 @@ int main(int argc, const char **argv) {
 
         auto toMergeModule = parseIRFile(InputFilename, error, context);
 
+        deinternalize_module(*toMergeModule);
         for(auto &fname : FunctionNames){
 
 
@@ -115,27 +126,27 @@ int main(int argc, const char **argv) {
             auto fObject = toMergeModule->getFunction(fname);
 
             if(!fObject){
-                errs() << "Function " << fname << " does not exist\n";
+                errs() << "\tFunction " << fname << " does not exist\n";
 
                 if(!SkipOnError){
-                    llvm::report_fatal_error("Function " + fname + " not found !");
+                    llvm::report_fatal_error("\tFunction " + fname + " not found !");
                 }
 
                 continue; // continue since the function does not exist
             }
 
-            errs() << "Merging function " << fname << "\n";
+            errs() << "\tMerging function " << fname << "\n";
             // Change function name
 
             std::string newName;
             llvm::raw_string_ostream newNameOutput(newName);
             newNameOutput << fname << "_" << modulesCount << FuncSufix;
-            fObject->setName(newNameOutput.str());
+            fObject->setName(newName);
 
-            errs() << newNameOutput.str() << "\n";
+            errs() << "Ready to merge " << newNameOutput.str() << "\n";
 
-            // Link new function
             linker.linkInModule(std::move(toMergeModule), Flags);
+            errs() << "Done " << newNameOutput.str() << "\n";
         }
 
         modulesCount++;
