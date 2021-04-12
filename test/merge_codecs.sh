@@ -13,7 +13,7 @@ then
   echo $FUNCTIONS
   echo "======"
 
-  CREATED_ONES=($(../build/crow-linker $ORIGINAL out.bc --override -crow-merge-debug-level=1 -crow-merge-skip-on-error -crow-merge-bitcodes="$UNIQUE_VARIANTS" -crow-merge-functions="$FUNCTIONS" 2>err.log))
+  ../build/crow-linker $ORIGINAL codecs.all.bc --override -crow-merge-debug-level=1 -crow-merge-skip-on-error -crow-merge-bitcodes="$UNIQUE_VARIANTS" -crow-merge-functions="sodium_bin2base64"
 
   exit 0
   for c in "${CREATED_ONES[@]}"

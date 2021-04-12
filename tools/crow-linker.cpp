@@ -15,6 +15,7 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -57,6 +58,16 @@ static cl::opt<bool>
         Override("override", cl::desc("Override symbols"), cl::init(false));
 
 static cl::opt<bool>
+        InstrumentFunction("instrument-function", cl::desc("Instrument first function basic block to construct the call graph. When linking ensure that a function _cb(i: i32) exist"), cl::init(false));
+
+static cl::opt<bool>
+        InstrumentBB("instrument-bb", cl::desc("Instrument basic blocks to construct the call graph. When linking ensure that a function _cb(i: i32) exist"), cl::init(false));
+
+static cl::opt<std::string> InstrumentCallbackName("callback-function-name",
+                                      cl::desc("Callback function name for callgraph instrumentation")
+        , cl::init("_cb71P5H47J3A"));
+
+static cl::opt<bool>
         InjectOnlyIfDifferent("merge-only-if-different", cl::desc("Add new function only if it is different to the original one"), cl::init(true));
 
 static cl::opt<unsigned> DebugLevel(
@@ -95,6 +106,7 @@ static void deinternalize_module(Module &M, bool saveBackup=false){
 
 static std::set<size_t> moduleFunctionHashes;
 static std::hash<std::string> hasher;
+static int instrumentId = 1000;
 
 static bool is_same_func(std::string function_name, std::string module_file, bool saveIfNotIn=true){
 
@@ -145,6 +157,35 @@ static void restore_linkage(Module &M){
     }
 }
 
+Function* declare_function_instrument_cb(Module &M, LLVMContext &context){
+
+    std::vector<Type*> args(1,
+                            Type::getInt32Ty(context));
+    FunctionType *tpe = FunctionType::get(Type::getVoidTy(context), args,false);
+    Function *callee = Function::Create(tpe, Function::ExternalLinkage, InstrumentCallbackName, M);
+
+    return callee;
+}
+
+void instrument_BB(BasicBlock *BB, Function *fCb){
+
+
+    // Construct call
+    IRBuilder builder(BB);
+    if (DebugLevel > 2)
+        errs() << "Constructing call" << "\n";
+
+
+    BasicBlock::iterator insertIn = BB->getFirstInsertionPt();
+    while (isa<AllocaInst>(insertIn))  ++insertIn;
+
+    Value *bid = llvm::ConstantInt::get(Type::getInt32Ty(BB->getContext()), instrumentId++);
+    CallInst::Create(fCb, bid, "", cast<Instruction>(insertIn));
+
+    if (DebugLevel > 2)
+        errs() << "Inserting before" << *insertIn << "\n";
+}
+
 int main(int argc, const char **argv) {
 
     // General stats
@@ -173,6 +214,12 @@ int main(int argc, const char **argv) {
 
     for(auto &F: *bitcode){
         is_same_func(F.getName().str(), InputFilename);
+    }
+
+    // Declare _cb71P5H47J3A(i: i32) -> void
+    Function * fCb = nullptr;
+    if(InstrumentFunction){
+        fCb = declare_function_instrument_cb(*bitcode, context);
     }
 
     // Set override flag
@@ -265,6 +312,34 @@ int main(int argc, const char **argv) {
 
     // Restore initial function and global linkage
     restore_linkage(*bitcode);
+
+    // Instrument for callgraph if needed
+    if((InstrumentFunction || InstrumentBB) && fCb){
+
+        if(DebugLevel > 2)
+            errs() << "Instrumenting functions for callgraph"  << "\n";
+
+        for(auto &F: *bitcode){
+            if(!F.isDeclaration()) {
+
+                if (DebugLevel > 2)
+                    errs() << F.getName() << "Instrumenting basic blocks" << "\n";
+
+                for(auto &BBA: F){
+                    // Instrument all BB
+                    instrument_BB(&BBA, fCb);
+
+                    // TODO, print map for future analysis
+
+                    if(!InstrumentBB && InstrumentFunction){
+                        break;
+                    }
+                }
+
+            }
+        }
+
+    }
 
     std::error_code EC;
     llvm::raw_fd_ostream OS(OutFileName, EC, llvm::sys::fs::F_None);
