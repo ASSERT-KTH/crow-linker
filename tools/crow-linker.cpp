@@ -54,6 +54,12 @@ static cl::opt<bool> SkipOnError(
         cl::init(false));
 
 
+static cl::opt<bool> NotLookForFunctions(
+        "skip-function-names",
+        cl::desc("Skip function names"),
+        cl::init(false));
+
+
 static cl::opt<bool>
         Override("override", cl::desc("Override symbols"), cl::init(false));
 
@@ -66,6 +72,20 @@ static cl::opt<bool>
 static cl::opt<std::string> InstrumentCallbackName("callback-function-name",
                                       cl::desc("Callback function name for callgraph instrumentation")
         , cl::init("_cb71P5H47J3A"));
+
+
+static cl::opt<std::string> MergeFunctionSuffix("merge-function-suffix",
+                                                   cl::desc("N1 diversifier function suffix")
+        , cl::init("_n1"));
+
+
+static cl::opt<bool> MergeFunctionAsPtr("merge-function-ptrs",
+                                                cl::desc("Create the discrminator based on a global array of ptrs, accessing the function by the index in the array. This will create a Wasm table alter if the target is wasm32")
+        , cl::init(false));
+
+static cl::opt<bool> MergeFunctionAsSCases("merge-function-switch-cases",
+                                        cl::desc("Create the discrminator based on a huge switch case.")
+        , cl::init(false));
 
 static cl::opt<bool>
         InjectOnlyIfDifferent("merge-only-if-different", cl::desc("Add new function only if it is different to the original one"), cl::init(true));
@@ -85,6 +105,26 @@ inline bool exists (const std::string& name) {
 static std::map<std::string, GlobalValue::LinkageTypes> backupLinkage4Functions;
 static std::map<std::string, GlobalValue::LinkageTypes> backupLinkage4Globals;
 
+static std::map<Function*, std::vector<Function*>> origingalVariantsMap;
+
+static void printVariantsMap(){
+    for(auto &key: origingalVariantsMap){
+        errs() << key.first->getName() << ": " << key.second.size() + 1 << "\n";
+    }
+}
+
+static void addVariant(Function *original, Function *variant){
+
+    if(!origingalVariantsMap.count(original)){
+        // Create the entry
+        if(DebugLevel > 2)
+            errs()  << "Adding new entry for " << original->getName() << " variant: " << variant->getName() << "\n";
+
+        origingalVariantsMap[original] = std::vector<Function*>();
+    }
+
+    origingalVariantsMap[original].push_back(variant);
+}
 
 static void deinternalize_module(Module &M, bool saveBackup=false){
     // For functions
@@ -173,7 +213,7 @@ void instrument_BB(BasicBlock *BB, Function *fCb){
     // Construct call
     IRBuilder builder(BB);
     if (DebugLevel > 2)
-        errs() << "Constructing call" << "\n";
+        errs() << "Constructing call for " << BB->getParent()->getName() << " isDeclaration: " << BB->getParent()->isDeclaration()  << "\n";
 
 
     BasicBlock::iterator insertIn = BB->getFirstInsertionPt();
@@ -217,6 +257,9 @@ int main(int argc, const char **argv) {
     }
 
     // Declare _cb71P5H47J3A(i: i32) -> void
+    if(DebugLevel > 2)
+        errs() << "Injecting instrumentation callback\n";
+
     Function * fCb = nullptr;
     if(InstrumentFunction){
         fCb = declare_function_instrument_cb(*bitcode, context);
@@ -229,7 +272,13 @@ int main(int argc, const char **argv) {
         Flags |=  Linker::Flags::OverrideFromSrc;
 
 
+    if(DebugLevel > 2)
+        errs() << "Merging modules\n";
+
     for(auto &module: BCFiles) {
+
+        if(DebugLevel > 3)
+            errs() << "Merging module " << module << "\n";
 
         if (!exists(module)) {
 
@@ -246,70 +295,84 @@ int main(int argc, const char **argv) {
         auto toMergeModule = parseIRFile(module, error, context);
 
         deinternalize_module(*toMergeModule);
-        for(auto &fname : FunctionNames){
-
-            if(DebugLevel > 1)
-                errs() << "Parsing " << module << "\n";
-
-            auto fObject = toMergeModule->getFunction(fname);
-
-            if(fObject->isDeclaration())
-                continue;
-
-            if(!fObject){
+        if(!NotLookForFunctions)
+            for(auto &fname : FunctionNames){
 
                 if(DebugLevel > 1)
-                    errs() << "\tFunction " << fname << " does not exist\n";
+                    errs() << "Adding function " << fname << "\n";
 
-                if(!SkipOnError){
-                    llvm::report_fatal_error("\tFunction " + fname + " not found !");
-                }
-
-                continue; // continue since the function does not exist
-            }
-
-            if(DebugLevel > 1)
-                errs() << "\tMerging function " << fname << "\n";
-
-
-            if(InjectOnlyIfDifferent){
-
-                if(DebugLevel > 1)
-                    errs() << "\t Cheking for identical function" << "\n";
-
-                if(is_same_func(fname, module)){
-
-                    if(DebugLevel > 0)
-                        errs() << "\t Removing identical function " << fname << " in " << module << "\n";
-
+                if(fname.empty())
                     continue;
+
+                auto fObject = toMergeModule->getFunction(fname);
+
+                if(fObject->isDeclaration())
+                    continue;
+
+                if(DebugLevel > 1)
+                    errs() << "\tMerging function " << fname << "\n";
+
+                if(InjectOnlyIfDifferent){
+
+                    if(DebugLevel > 1)
+                        errs() << "\t Cheking for identical function" << "\n";
+
+                    if(is_same_func(fname, module)){
+
+                        if(DebugLevel > 0)
+                            errs() << "\t Removing identical function " << fname << " in " << module << "\n";
+
+                        continue;
+                    }
+
                 }
 
+                std::string newName;
+                llvm::raw_string_ostream newNameOutput(newName);
+                newNameOutput << fname << "_" << modulesCount << FuncSufix;
+
+                // Check if the function has a special linkage
+                if(backupLinkage4Functions.count(fObject->getName().str())) // Set the nw function type as the original
+                    backupLinkage4Functions[newName] = backupLinkage4Functions[fObject->getName().str()];
+
+                // Change function name
+                fObject->setName(newName);
+
+                if(DebugLevel > 2)
+                    errs() << "Ready to merge " << newNameOutput.str() << "\n";
+
+                outs() << newName << "\n";
+                added++;
+
+                auto original = bitcode->getFunction(fname);
+
+                if(original){
+                    addVariant(original, fObject);
+                }
+                else{
+                    errs() << "WARNING: " << "original bitcode does not contain the function " << fname << "\n";
+                }
             }
-
-            std::string newName;
-            llvm::raw_string_ostream newNameOutput(newName);
-            newNameOutput << fname << "_" << modulesCount << FuncSufix;
-
-            // Check if the function has a special linkage
-            if(backupLinkage4Functions.count(fObject->getName().str())) // Set the nw function type as the original
-                backupLinkage4Functions[newName] = backupLinkage4Functions[fObject->getName().str()];
-
-            // Change function name
-            fObject->setName(newName);
-
-            if(DebugLevel > 2)
-                errs() << "Ready to merge " << newNameOutput.str() << "\n";
-
-            outs() << newName << "\n";
-            added++;
-        }
 
         linker.linkInModule(std::move(toMergeModule), Flags);
 
         modulesCount++;
     }
 
+    if(MergeFunctionAsPtr || MergeFunctionAsSCases){
+
+        if(DebugLevel > 4){
+            // print all map etry count
+            printVariantsMap();
+        }
+        // TODO
+
+        // create discriminator function with the same linkage of the original function
+        // for each function in the map
+        // create a huge call with a phi
+        // create a huge switch case
+
+    }
     // Restore initial function and global linkage
     restore_linkage(*bitcode);
 
@@ -330,6 +393,7 @@ int main(int argc, const char **argv) {
                     instrument_BB(&BBA, fCb);
 
                     // TODO, print map for future analysis
+                    errs() << F.getName() << ", " << instrumentId << "\n";
 
                     if(!InstrumentBB && InstrumentFunction){
                         break;

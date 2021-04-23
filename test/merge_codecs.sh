@@ -13,7 +13,9 @@ then
   echo $FUNCTIONS
   echo "======"
 
-  ../build/crow-linker $ORIGINAL codecs.all.bc --override -crow-merge-debug-level=1 -crow-merge-skip-on-error -crow-merge-bitcodes="$UNIQUE_VARIANTS" -crow-merge-functions="sodium_bin2base64"
+  ../build/crow-linker $ORIGINAL codecs.all.bc --override --instrument-function -crow-merge-debug-level=1 -crow-merge-skip-on-error -crow-merge-bitcodes="$UNIQUE_VARIANTS" -crow-merge-functions="sodium_bin2base64"
+
+  #llvm-dis codecs.all.bc -o -
 
   exit 0
   for c in "${CREATED_ONES[@]}"
