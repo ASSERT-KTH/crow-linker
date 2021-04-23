@@ -18,7 +18,7 @@ do
 
     ../build/crow-linker $originalmodule "out_group/$module/$module.multivariant.bc" --override $args -crow-merge-debug-level=5 -merge-function-ptrs -crow-merge-skip-on-error -crow-merge-bitcodes="$variants" -crow-merge-functions="$fns"
 
-      llvm-dis "out_group/$module/$module.multivariant.bc" -o "out_group/$module/$module.multivariant.ll"
+      llvm-dis "out_group/$module/$module.multivariant.bc" -o discrmination.ll
 
       exit 0
   fi

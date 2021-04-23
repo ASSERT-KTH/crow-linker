@@ -73,6 +73,10 @@ static cl::opt<std::string> InstrumentCallbackName("callback-function-name",
                                       cl::desc("Callback function name for callgraph instrumentation")
         , cl::init("_cb71P5H47J3A"));
 
+static cl::opt<std::string> DiscrminatorCallbackName("discrminator-callback-function-name",
+                                                   cl::desc("Callback function name to get the discriminator")
+        , cl::init("discriminate"));
+
 
 static cl::opt<std::string> MergeFunctionSuffix("merge-function-suffix",
                                                    cl::desc("N1 diversifier function suffix")
@@ -196,6 +200,17 @@ static void restore_linkage(Module &M){
             G.setLinkage(backupLinkage4Globals[G.getName().str()]);
     }
 }
+
+
+Function* declare_function_discriminator(Module &M, LLVMContext &context){
+
+    std::vector<Type*> args(0);
+    FunctionType *tpe = FunctionType::get(Type::getInt32Ty(context), args,false);
+    Function *callee = Function::Create(tpe, Function::ExternalLinkage, DiscrminatorCallbackName, M);
+
+    return callee;
+}
+
 
 Function* declare_function_instrument_cb(Module &M, LLVMContext &context){
 
@@ -365,6 +380,9 @@ int main(int argc, const char **argv) {
             // print all map etry count
             printVariantsMap();
         }
+        // Register discrminator function as external
+        declare_function_discriminator(*bitcode, context);
+
         // TODO
 
         // create discriminator function with the same linkage of the original function
