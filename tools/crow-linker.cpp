@@ -231,10 +231,11 @@ Function* declare_function_discriminator(Module &M, LLVMContext &context, Functi
     llvm::raw_string_ostream newNameOutput(newName);
     newNameOutput << original.getName() << "_" << MergeFunctionSuffix;
 
+    auto linkage = backupLinkage4Functions[original.getName().str()];
 
     std::vector<Type*> args(0);
     FunctionType *tpe = original.getFunctionType();
-    Function *callee = Function::Create(tpe, original.getLinkage(), newName, M);
+    Function *callee = Function::Create(tpe, linkage, newName, M);
 
     unsigned IDX = 0;
     auto originalArgs = original.args().begin();
@@ -253,15 +254,12 @@ Function* declare_function_discriminator(Module &M, LLVMContext &context, Functi
 
     errs() << "Building the switch case " << original.getName() << " " << variants.size() << "\n";
 
-    //
     std::vector<Value*> Values;
     for (auto &Arg : callee->args()) {
         Values.push_back(&Arg);
     }
 
-
     errs() << "Finishing the switch case" << "\n";
-
 
     std::vector<BasicBlock*> bbs;
     for(auto &variant: variants) {
@@ -275,9 +273,6 @@ Function* declare_function_discriminator(Module &M, LLVMContext &context, Functi
 
         BasicBlock *caseBB = BasicBlock::Create(context,bbName, callee);
 
-        //auto bbval = Builder.CreateCall(&original, Values, "");
-        //Builder.CreateRet(bbval);
-        //auto *bid = llvm::ConstantInt::get(Type::getInt32Ty(BB->getContext()), instrumentId++);
         bbs.push_back(caseBB);
     }
 
@@ -285,7 +280,6 @@ Function* declare_function_discriminator(Module &M, LLVMContext &context, Functi
 
     BasicBlock *EndBB = BasicBlock::Create(context, "end", callee);
     auto phi = Builder.CreateSwitch(discriminateValue, EndBB, variants.size());
-    //Builder.SetInsertPoint(EndBB);
 
     IDX=0;
     for(auto &variant: variants) {

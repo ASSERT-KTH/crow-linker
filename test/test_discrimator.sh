@@ -16,10 +16,15 @@ do
 
     echo $variants
 
-    ../build/crow-linker $originalmodule "out_group/$module/$module.multivariant.bc" -instrument-function  --override $args -crow-merge-debug-level=6 -merge-function-ptrs -crow-merge-skip-on-error -crow-merge-bitcodes="$variants" -crow-merge-functions="$fns"
+      ../build/crow-linker $originalmodule "$module.multivariant.bc" -instrument-function  --override $args -crow-merge-debug-level=6 -merge-function-ptrs -crow-merge-skip-on-error -crow-merge-bitcodes="$variants" -crow-merge-functions="$fns"
+      echo "================================="
+      /Users/javierca/Documents/Develop/wasi-sdk-10.0/bin/wasm-ld "$module.multivariant.bc" --no-entry --export-all --allow-undefined -o multivariant.wasm
 
       llvm-dis "out_group/$module/$module.multivariant.bc" -o discrmination.ll
+      wasm2wat multivariant.wasm -o multivariant.wat
 
+      # TODO, check generated x86 code.
+      
       exit 0
   fi
 done
