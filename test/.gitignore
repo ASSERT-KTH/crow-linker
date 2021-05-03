@@ -2,3 +2,11 @@
 out_group/*
 original_modules
 multivariants
+bcs/*
+codecs_91/*
+instrumented/*
+non_instrumented/*
+original_modules/*
+originals/*
+sodium7_argon2_36/*
+sodium7_blake2b-ref_11/*

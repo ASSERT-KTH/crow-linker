@@ -1,0 +1,1 @@
+../third_party/llvm-Release-install/bin/clang -emit-llvm -S example_ptr.c -o example_ptr.ll
