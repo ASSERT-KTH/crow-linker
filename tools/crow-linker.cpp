@@ -167,7 +167,7 @@ static void addVariant(std::string &original, std::string &variantName){
     if(DebugLevel > 2)
         errs()  << "Adding new entry for " << original << " variant: " << variantName <<  "\n";
 
-    if(!origingalVariantsMap.count(original)){
+    if(origingalVariantsMap.count(original) == 0){
         // Create the entry
         std::vector<std::string> v;
         origingalVariantsMap[original] = v;
@@ -251,7 +251,7 @@ int main(int argc, const char **argv) {
             for(auto &fname : FunctionNames){
 
                 if(DebugLevel > 1)
-                    errs() << "Adding function " << fname << "\n";
+                    errs() << "Adding function " << fname << " Module " << module << "\n";
 
                 if(fname.empty())
                     continue;
@@ -315,7 +315,7 @@ int main(int argc, const char **argv) {
     }
 
 
-    crow_linker::merge_variants(*bitcode, context);
+    crow_linker::merge_variants(*bitcode, context, origingalVariantsMap);
     // Restore initial function and global linkage
     restore_linkage(*bitcode);
 

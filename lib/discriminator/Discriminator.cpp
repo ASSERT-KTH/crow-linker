@@ -36,6 +36,10 @@ namespace crow_linker {
 
 
 
+    static cl::opt<bool> FullDiversifier("replace-all-calls-by-the-discriminator",
+                                                                           cl::desc("Replace all calls to discriminator ")
+
+            , cl::init(false));
 
     static void printVariantsMap(){
         for(auto &key: origingalVariantsMap){
@@ -268,9 +272,68 @@ namespace crow_linker {
         FunctionType *tpe = FunctionType::get(Type::getInt32Ty(context), args,false);
         Function *callee = Function::Create(tpe, Function::ExternalLinkage, DiscrminatorCallbackName, M);
 
+        if(DebugLevel > 2){
+            // print all map etry count
+            errs() << "Defined discrminate function " << "\n";
+        }
         return callee;
     }
-    void merge_variants(Module &bitcode, LLVMContext& context){
+
+    bool can_replace(Function *f, std::vector<std::string> &fMap, std::string originalName){
+        auto name = f->getName();
+
+        if(name.compare(originalName) == 0)
+            return true;
+
+        for(auto &kv: fMap){
+            if(name.compare(kv) == 0)
+                return true;
+        }
+
+        return false;
+    }
+
+    void full_diversification_replace(Module &bitcode, LLVMContext& context, Function* discrminatorF, std::vector<std::string> &fMap, std::string &originalName){
+
+
+        for(auto &F: bitcode){
+            // Avoid replacements inside discriminator
+            if(&F == discrminatorF)
+                continue;
+
+            for(auto &BB: F){
+
+                for(auto inst = BB.begin(); inst != BB.end(); ++inst){
+
+                    if(DebugLevel > 5) {
+                        inst->dump();
+                    }
+                    if(isa<CallInst>(inst)){
+
+                        auto c = cast<CallInst>(inst);
+
+                        auto oldCalled = c->getCalledFunction();
+
+                        if(DebugLevel > 3){
+                            errs() << "Replacing function call " << oldCalled->getName() << "\n";
+                        }
+
+                        if(can_replace(oldCalled, fMap, originalName)){
+
+                            if(DebugLevel > 3){
+                                errs() << "Replaced function call " << oldCalled->getName() << "\n";
+                            }
+
+                            c->setCalledFunction(discrminatorF);
+                        }
+                    }
+                }
+
+            }
+        }
+    }
+
+    void merge_variants(Module &bitcode, LLVMContext& context, std::map<std::string, std::vector<std::string>> &fMap){
 
         if(MergeFunctionAsPtr || MergeFunctionAsSCases){
 
@@ -284,17 +347,43 @@ namespace crow_linker {
                 errs() << "Defining discrminate function " << "\n";
             }
             auto discriminate = declare_function_discriminatee(bitcode, context);
-
+            if(DebugLevel > 2){
+                // print all map etry count
+                errs() << "Unique variants count " << fMap.size() << "\n";
+            }
             // for each function in the map
-            for(auto &kv: origingalVariantsMap){
+            for(auto &kv: fMap){
 
                 if(DebugLevel > 2)
-                    errs() << "Creating discrmination harness\n";
+                    errs() << "Creating discrimination harness\n";
 
                 if(DebugLevel > 2)
                     errs() << "Merging " << kv.first << " " << kv.second.size() <<  "\n";
 
                 auto mergeFunction = declare_function_discriminator(bitcode, context, kv.first, *discriminate, kv.second);
+
+                // rename original function
+                Function *originalFunction = bitcode.getFunction(kv.first);
+
+                std::string originalName;
+                llvm::raw_string_ostream originalNameOutput(originalName);
+                originalNameOutput << kv.first << "_original";
+                originalFunction->setName(originalName);
+
+                // rename then discriminator function as the original
+                mergeFunction->setName(kv.first);
+
+                // replace all calls to original(variants) to the discriminator
+
+                if(FullDiversifier){
+
+                    if(DebugLevel > 3){
+                        errs() << "Replacing all calls \n";
+                    }
+                    // Iterate module and replace calls by X
+                    full_diversification_replace(bitcode, context, mergeFunction, kv.second, originalName);
+                }
+
                 if(DebugLevel > 2)
                     errs()  << mergeFunction->getName() << "\n";
             }
