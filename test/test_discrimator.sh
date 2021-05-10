@@ -16,5 +16,5 @@ echo $variants
 echo "================================="
 #/Users/javierca/Documents/Develop/wasi-sdk-10.0/bin/wasm-ld "$module.multivariant.bc" --no-entry --export-all --allow-undefined -o multivariant.wasm
 
-#../third_party/llvm-Release-install/bin/llvm-dis "$module.multivariant.bc" -o discrmination.ll
+../third_party/llvm-Release-install/bin/llvm-dis "$module.multivariant.bc" -o discrmination.ll
 #$WASM2WAT multivariant.wasm -o multivariant.wat

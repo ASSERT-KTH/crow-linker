@@ -279,7 +279,7 @@ namespace crow_linker {
         return callee;
     }
 
-    bool can_replace(Function *f, std::vector<std::string> &fMap, std::string originalName){
+    bool can_replace(Function *f, std::vector<std::string> &fMap, std::string &originalName){
         auto name = f->getName();
 
         if(name.compare(originalName) == 0)
@@ -304,10 +304,6 @@ namespace crow_linker {
             for(auto &BB: F){
 
                 for(auto inst = BB.begin(); inst != BB.end(); ++inst){
-
-                    if(DebugLevel > 5) {
-                        inst->dump();
-                    }
                     if(isa<CallInst>(inst)){
 
                         auto c = cast<CallInst>(inst);
@@ -321,6 +317,7 @@ namespace crow_linker {
                         if(can_replace(oldCalled, fMap, originalName)){
 
                             if(DebugLevel > 3){
+                                c->dump();
                                 errs() << "Replaced function call " << oldCalled->getName() << "\n";
                             }
 
