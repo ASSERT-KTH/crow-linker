@@ -19,8 +19,8 @@ then
   for c in "${CREATED_ONES[@]}"
   do
     echo $c
-    llvm-extract --func=$c out.bc -o tmp.bc
-    llvm-dis tmp.bc -o $c.dump.ll
+    /usr/local/opt/llvm/bin/llvm-extract --func=$c out.bc -o tmp.bc
+    /usr/local/opt/llvm/bin/llvm-dis tmp.bc -o $c.dump.ll
   done
 
 

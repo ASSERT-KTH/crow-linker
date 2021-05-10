@@ -24,12 +24,28 @@
 #include <system_error>
 #include "llvm/Linker/Linker.h"
 #include <llvm/IRReader/IRReader.h>
-#include <sys/stat.h>
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include "instrumentor/Instrumentor.h"
+#include "discriminator/Discriminator.h"
+
+
 using namespace llvm;
+using namespace crow_linker;
+
+unsigned DebugLevel;
+
+/* Discrminator options and flags */
+extern std::string MergeFunctionSuffix;
+extern std::string DiscrminatorCallbackName;
+extern bool MergeFunctionAsPtr;
+extern bool MergeFunctionAsSCases;
+
+/* Instrumentor options */
+extern bool InstrumentFunction;
+extern bool InstrumentBB;
 
 static cl::opt<std::string> InputFilename(cl::Positional, cl::desc("<original bitcode>"), cl::init("-"));
 
@@ -64,94 +80,16 @@ static cl::opt<bool>
         Override("override", cl::desc("Override symbols"), cl::init(false));
 
 static cl::opt<bool>
-        InstrumentFunction("instrument-function", cl::desc("Instrument first function basic block to construct the call graph. When linking ensure that a function _cb(i: i32) exist"), cl::init(false));
-
-static cl::opt<bool>
-        InstrumentBB("instrument-bb", cl::desc("Instrument basic blocks to construct the call graph. When linking ensure that a function _cb(i: i32) exist"), cl::init(false));
-
-static cl::opt<std::string> InstrumentCallbackName("callback-function-name",
-                                      cl::desc("Callback function name for callgraph instrumentation")
-        , cl::init("_cb71P5H47J3A"));
-
-static cl::opt<std::string> DiscrminatorCallbackName("discrminator-callback-function-name",
-                                                   cl::desc("Callback function name to get the discriminator")
-        , cl::init("discriminate"));
-
-
-static cl::opt<std::string> MergeFunctionSuffix("merge-function-suffix",
-                                                   cl::desc("N1 diversifier function suffix")
-        , cl::init("_n1"));
-
-
-static cl::opt<bool> MergeFunctionAsPtr("merge-function-ptrs",
-                                                cl::desc("Create the discrminator based on a global array of ptrs, accessing the function by the index in the array. This will create a Wasm table alter if the target is wasm32")
-        , cl::init(false));
-
-static cl::opt<bool> MergeFunctionAsSCases("merge-function-switch-cases",
-                                        cl::desc("Create the discrminator based on a huge switch case.")
-        , cl::init(false));
-
-static cl::opt<bool> UseFunctionInvoke("merge-function-use-invoke",
-                                           cl::desc("Use LLVM IR invoke to transfer control to desired function.")
-        , cl::init(false));
-
-static cl::opt<bool> MergeAllAtOnce("merge-function-all-cases",
-                                           cl::desc("Create the discrminator based on a huge switch case.")
-        , cl::init(false));
-
-static cl::opt<bool>
         InjectOnlyIfDifferent("merge-only-if-different", cl::desc("Add new function only if it is different to the original one"), cl::init(true));
 
-static cl::opt<unsigned> DebugLevel(
+static cl::opt<unsigned, true> DebugLevelFlag(
         "crow-merge-debug-level",
         cl::desc("Pass devbug level, 0 for none"),
-        cl::init(0));
-
-static cl::opt<unsigned> StartIdAt(
-        "crow-merge-id-start",
-        cl::desc("Start the function mapping with this number. This will be valid only with the instrumentation flags"),
+        cl::location(DebugLevel),
         cl::init(0));
 
 static unsigned modulesCount = 0;
 
-inline bool exists (const std::string& name) {
-    struct stat buffer;
-    return (stat (name.c_str(), &buffer) == 0);
-}
-
-static std::map<std::string, GlobalValue::LinkageTypes> backupLinkage4Functions;
-static std::map<std::string, GlobalValue::LinkageTypes> backupLinkage4Globals;
-
-static std::map<std::string, std::vector<std::string>> origingalVariantsMap;
-
-static void printVariantsMap(){
-    for(auto &key: origingalVariantsMap){
-        errs() << key.first << ": " << key.second.size() + 1 << " " << &key << "\n";
-
-        if (DebugLevel > 5){
-            for(auto &v: origingalVariantsMap[key.first]){
-                errs() << &v;
-                //if(v->getName().str())
-                errs() << " " << v;
-                errs() << "\n";
-            }
-        }
-    }
-}
-
-static void addVariant(std::string &original, std::string &variantName){
-
-    if(DebugLevel > 2)
-        errs()  << "Adding new entry for " << original << " variant: " << variantName <<  "\n";
-
-    if(!origingalVariantsMap.count(original)){
-        // Create the entry
-        std::vector<std::string> v;
-        origingalVariantsMap[original] = v;
-    }
-
-    origingalVariantsMap[original].push_back(variantName);
-}
 
 static void deinternalize_module(Module &M, bool saveBackup=false){
     // For functions
@@ -173,7 +111,6 @@ static void deinternalize_module(Module &M, bool saveBackup=false){
 
 static std::set<size_t> moduleFunctionHashes;
 static std::hash<std::string> hasher;
-static int instrumentId = 0;
 
 static bool is_same_func(std::string function_name, std::string module_file, bool saveIfNotIn=true){
 
@@ -225,266 +162,20 @@ static void restore_linkage(Module &M){
 }
 
 
-Function* declare_function_discriminate(Module &M, LLVMContext &context){
+static void addVariant(std::string &original, std::string &variantName){
 
-    std::vector<Type*> args(1,
-                            Type::getInt32Ty(context));// the first argument is the number of variants
-    FunctionType *tpe = FunctionType::get(Type::getInt32Ty(context), args,false);
-    Function *callee = Function::Create(tpe, Function::ExternalLinkage, DiscrminatorCallbackName, M);
+    if(DebugLevel > 2)
+        errs()  << "Adding new entry for " << original << " variant: " << variantName <<  "\n";
 
-    return callee;
+    if(!origingalVariantsMap.count(original)){
+        // Create the entry
+        std::vector<std::string> v;
+        origingalVariantsMap[original] = v;
+    }
+
+    origingalVariantsMap[original].push_back(variantName);
 }
 
-void create_switch_case_variant(Function *callee,Module &M, LLVMContext &context, Function& original, Function& discrminate, std::vector<std::string> &variants){
-
-
-    unsigned IDX = 0;
-    auto originalArgs = original.args().begin();
-    for(auto &arg: callee->args()){
-        arg.setName(originalArgs[IDX++].getName());
-    }
-
-
-    IRBuilder<> Builder(context);
-
-    BasicBlock *BB = BasicBlock::Create(context, "entry", callee);
-    Builder.SetInsertPoint(BB);
-
-    std::vector<Value*> discriminatorArgs ;
-    discriminatorArgs.push_back(
-            ConstantInt::get(Type::getInt32Ty(context), variants.size() + 1) // pass the number of variants plus the original
-            );
-    auto discriminateValue = Builder.CreateCall(&discrminate, discriminatorArgs, "");
-
-    if (DebugLevel > 4)
-        errs() << "Building the switch case " << variants.size() << "\n";
-
-    std::vector<Value*> Values;
-    for (auto &Arg : callee->args()) {
-        Values.push_back(&Arg);
-    }
-
-    errs() << "Finishing the switch case" << "\n";
-
-    std::vector<BasicBlock*> bbs;
-    for(auto &variant: variants) {
-
-
-        std::string bbName;
-        llvm::raw_string_ostream bbNameOutput(bbName);
-        bbNameOutput << "case_" << variant;
-
-        if (DebugLevel > 4)
-            errs() << "Variant case " << bbName << "\n";
-
-        BasicBlock *caseBB = BasicBlock::Create(context,bbName, callee);
-
-        bbs.push_back(caseBB);
-    }
-
-    if (DebugLevel > 4)
-        errs() << "BB created" << "\n";
-
-    BasicBlock *EndBB = BasicBlock::Create(context, "end", callee);
-    auto phi = Builder.CreateSwitch(discriminateValue, EndBB, variants.size());
-
-    IDX=0;
-    for(auto &variant: variants) {
-
-        auto func = M.getFunction(variant);
-
-        auto *bid = llvm::ConstantInt::get(Type::getInt32Ty(context), IDX);
-        phi->addCase(bid, bbs[IDX++]);
-
-        if(!UseFunctionInvoke) {
-
-            if(func->getReturnType() != Type::getVoidTy(context)) {
-                Builder.CreateRet(
-                        Builder.CreateCall(func, Values, "")
-                );
-            }
-            else
-            {
-
-                Builder.CreateCall(func, Values, "");
-                Builder.CreateRetVoid();
-            }
-
-        }
-        else{
-            // TODO
-            llvm::report_fatal_error("Not implemented !");
-        }
-    }
-
-    if (DebugLevel > 4)
-        errs() << "BB bodies created" << "\n";
-    //Builder.SetInsertPoint(EndBB);
-
-    if(original.getReturnType() != Type::getVoidTy(context))
-        Builder.CreateRet(
-                Builder.CreateCall(&original, Values, "")
-        );
-    else {
-        Builder.CreateCall(&original, Values, "");
-        Builder.CreateRetVoid();
-    }
-    if (DebugLevel > 4)
-        errs() << "Returning the switch case" << "\n";
-}
-
-
-void create_ptrs_variant(Function *callee,Module &M, LLVMContext &context, Function& original, Function& discrminate, std::vector<std::string> &variants){
-
-
-    unsigned IDX = 0;
-    auto originalArgs = original.args().begin();
-    for(auto &arg: callee->args()){
-        arg.setName(originalArgs[IDX++].getName());
-    }
-
-    IRBuilder<> Builder(context);
-
-    // Create global table object
-    std::string newName;
-    llvm::raw_string_ostream newNameOutput(newName);
-    newNameOutput << original.getName() << "_global_table";
-
-    if(DebugLevel > 4)
-        errs() << "Creating global object " << "\n";
-
-    auto gType = ArrayType::get(
-            original.getType(), variants.size() + 1);
-    M.getOrInsertGlobal(newName, gType); // The variants + the original
-
-
-    auto globalTable = M.getGlobalVariable(newName);
-    globalTable->setLinkage(llvm::GlobalValue::InternalLinkage);
-    globalTable->setConstant(true);
-
-    // Set function pointers
-    std::vector<llvm::Constant*> values;
-
-    values.push_back(&original);
-
-    for(auto &variant: variants){
-
-        values.push_back(
-                M.getFunction(variant)
-                );
-    }
-
-    auto init = llvm::ConstantArray::get(
-            gType, values);
-    globalTable->setInitializer(init);
-
-    BasicBlock *BB = BasicBlock::Create(context, "entry", callee);
-    Builder.SetInsertPoint(BB);
-
-
-    if(DebugLevel > 4)
-        errs() << "Calling discriminator " << "\n";
-
-    std::vector<Value*> discriminatorArgs ;
-    auto discriminateValue = Builder.CreateCall(&discrminate, discriminatorArgs, "");
-
-    if(DebugLevel > 4)
-        errs() << "Loading f pointer" << "\n";
-
-    //auto tablePtr = Builder.CreateLoad(globalTable);
-
-    if(DebugLevel > 4)
-        errs() << "Loading f index" << "\n";
-
-    auto elementPtr = Builder.CreateGEP(
-            original.getType(),
-            globalTable, discriminateValue);
-    auto element = Builder.CreateLoad(elementPtr);
-
-    std::vector<Value*> Values;
-    for (auto &Arg : callee->args()) {
-        Values.push_back(&Arg);
-    }
-
-    //elementPtr->dump();
-    element->dump();
-
-
-    //auto cast = llvm::dyn_cast<Function*>(element);
-    //auto elementMethod = dyn_cast<Function>(element);
-    //cast->dump();
-
-    auto fCall = Builder.CreateCall(original.getFunctionType(),element, Values,  ""
-            );
-    //errs() << element << "\n";
-
-    fCall->dump();
-
-    Builder.CreateRet(fCall);
-
-}
-
-
-Function* declare_function_discriminator(Module &M, LLVMContext &context, std::string originalName, Function& discrminate, std::vector<std::string> &variants){
-
-    auto original = M.getFunction(originalName);
-
-    std::string newName;
-    llvm::raw_string_ostream newNameOutput(newName);
-    if(!original->getName().empty())
-        newNameOutput << original->getName() << "_" << MergeFunctionSuffix;
-    else
-        newNameOutput << "_" << MergeFunctionSuffix;
-
-    auto linkage = backupLinkage4Functions[originalName];
-
-    std::vector<Type*> args(0);
-    FunctionType *tpe = original->getFunctionType();
-    Function *callee = Function::Create(tpe, linkage, newName, M);
-
-    if(MergeFunctionAsSCases)
-        create_switch_case_variant(callee, M, context, *original, discrminate, variants);
-    if(MergeFunctionAsPtr)
-        create_switch_case_variant(callee, M, context, *original, discrminate, variants);
-        // TODO create_ptrs_variant(callee, M, context, original, discrminate, variants);
-
-    return callee;
-}
-
-
-Function* declare_function_instrument_cb(Module &M, LLVMContext &context){
-
-    std::vector<Type*> args(1,
-                            Type::getInt32Ty(context));
-    FunctionType *tpe = FunctionType::get(Type::getVoidTy(context), args,false);
-    Function *callee = Function::Create(tpe, Function::ExternalLinkage, InstrumentCallbackName, M);
-
-    return callee;
-}
-
-int instrument_BB(BasicBlock *BB, Function *fCb){
-
-    if(DebugLevel > 2) {
-        errs() << "Instrumenting ";
-        BB->dump();
-    }
-    // Construct call
-    IRBuilder builder(BB);
-    if (DebugLevel > 2)
-        errs() << "Constructing call for " << BB->getParent()->getName() << " isDeclaration: " << BB->getParent()->isDeclaration()  << "\n";
-
-
-    BasicBlock::iterator insertIn = BB->getFirstInsertionPt();
-    while (isa<AllocaInst>(insertIn))  ++insertIn;
-
-    Value *bid = llvm::ConstantInt::get(Type::getInt32Ty(BB->getContext()), instrumentId++);
-    CallInst::Create(fCb, bid, "", cast<Instruction>(insertIn));
-
-    if (DebugLevel > 2)
-        errs() << "Inserting before" << *insertIn << "\n";
-
-    return instrumentId - 1;
-}
 
 int main(int argc, const char **argv) {
 
@@ -513,6 +204,7 @@ int main(int argc, const char **argv) {
     }
 
     for(auto &F: *bitcode){
+        // Save original functions and globals
         is_same_func(F.getName().str(), InputFilename);
     }
 
@@ -522,7 +214,7 @@ int main(int argc, const char **argv) {
 
     Function * fCb = nullptr;
     if(InstrumentFunction){
-        fCb = declare_function_instrument_cb(*bitcode, context);
+        fCb =  declare_function_instrument_cb(*bitcode, context);
     }
 
     // Set override flag
@@ -622,67 +314,12 @@ int main(int argc, const char **argv) {
         modulesCount++;
     }
 
-    if(MergeFunctionAsPtr || MergeFunctionAsSCases){
 
-        if(DebugLevel > 4){
-            // print all map etry count
-            printVariantsMap();
-        }
-        // Register discrminator function as external
-        if(DebugLevel > 2){
-            // print all map etry count
-            errs() << "Defining discrminate function " << "\n";
-        }
-        auto discriminate = declare_function_discriminate(*bitcode, context);
-
-        // for each function in the map
-        for(auto &kv: origingalVariantsMap){
-
-            if(DebugLevel > 2)
-                errs() << "Creating discrmination harness\n";
-
-            if(DebugLevel > 2)
-                errs() << "Merging " << kv.first << " " << kv.second.size() <<  "\n";
-
-            auto mergeFunction = declare_function_discriminator(*bitcode, context, kv.first, *discriminate, kv.second);
-            if(DebugLevel > 2)
-                errs()  << mergeFunction->getName() << "\n";
-        }
-
-
-    }
+    crow_linker::merge_variants(*bitcode, context);
     // Restore initial function and global linkage
     restore_linkage(*bitcode);
 
-    // Instrument for callgraph if needed
-    if((InstrumentFunction || InstrumentBB) && fCb){
-        instrumentId = StartIdAt;
-
-        if(DebugLevel > 2)
-            errs() << "Instrumenting functions for callgraph"  << "\n";
-
-        for(auto &F: *bitcode){
-            if(!F.isDeclaration()) {
-
-                if (DebugLevel > 2)
-                    errs() << F.getName() << "Instrumenting basic blocks" << "\n";
-
-                for(auto &BBA: F){
-                    // Instrument all BB
-                    int id = instrument_BB(&BBA, fCb);
-
-                    // TODO, print map for future analysis
-                    errs() << F.getName() << ", " << id << "\n";
-
-                    if(!InstrumentBB && InstrumentFunction){
-                        break;
-                    }
-                }
-
-            }
-        }
-
-    }
+    crow_linker::instrument_functions(fCb, *bitcode);
 
     std::error_code EC;
     llvm::raw_fd_ostream OS(OutFileName, EC, llvm::sys::fs::F_None);

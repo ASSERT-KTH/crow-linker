@@ -104,18 +104,30 @@ variable_watch(LLVM_LDFLAGS)
 
 add_definitions(${LLVM_DEFINITIONS})
 
-set(CROW_FILES
-  #lib/Crow/Crow.cpp
-  #include/souper/Crow/Crow.h
+set(COMMON_FILES
+        include/common/Common.h
+        lib/common/Common.cpp
+      )
+
+set(DISCRIMINATOR_FILES
+  include/discriminator/Discriminator.h
+  lib/discriminator/Discriminator.cpp
+)
+
+set(INSTRUMENTOR_FILES
+        include/instrumentor/Instrumentor.h
+        lib/instrumentor/Instrumentor.cpp
 )
 
 set(CROW_MERGE_SOURCES
-  ${CROW_FILES}
-  )
+  ${COMMON_FILES}
+  ${INSTRUMENTOR_FILES}
+  ${DISCRIMINATOR_FILES}
+)
 
 add_executable(crow-linker
-  tools/crow-linker.cpp
-        )
+  ${CROW_MERGE_SOURCES}
+  tools/crow-linker.cpp)
 
 set(LLVM_LDFLAGS "${LLVM_LDFLAGS}")
 

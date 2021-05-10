@@ -11,20 +11,20 @@ function check4functions(){
 
   DATAF="data.txt"
   echo -n "" > $DATAF
-  for l in $(llvm-nm "$ORIGINAL" | grep -E " T " | awk '{print $3}') # Get defined functions in original
+  for l in $( /usr/local/opt/llvm/bin/llvm-nm "$ORIGINAL" | grep -E " T " | awk '{print $3}') # Get defined functions in original
   do
     # check for this function in variants
-    llvm-extract --func=$l "$ORIGINAL" -o t.bc
+     /usr/local/opt/llvm/bin/llvm-extract --func=$l "$ORIGINAL" -o t.bc
     echo -n $l " " "$ORIGINAL" " " >> $DATAF
     md5sum t.bc | awk '{print $1}' >> $DATAF
 
     for v in ${VARIANTS[@]}
     do
 
-      llvm-extract --func=$l "$v" -o t.bc
+       /usr/local/opt/llvm/bin/llvm-extract --func=$l "$v" -o t.bc
       echo -n $l " " "$v" " " >> $DATAF
       md5sum t.bc | awk '{print $1}' >> $DATAF
-      llvm-dis t.bc -o t.ll
+      /usr/local/opt/llvm/bin/llvm-dis t.bc -o t.ll
 
     done
 
