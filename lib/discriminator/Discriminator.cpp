@@ -85,7 +85,7 @@ namespace crow_linker {
             Values.push_back(&Arg);
         }
 
-        errs() << "Finishing the switch case" << "\n";
+        errs() << "Finishing the switch case for " << original.getName() << ". Final size " << variants.size() + 1 << "\n";
 
         std::vector<BasicBlock*> bbs;
         for(auto &variant: variants) {
@@ -350,6 +350,12 @@ namespace crow_linker {
             }
             // for each function in the map
             for(auto &kv: fMap){
+
+                if(kv.second.empty()){
+                    if(DebugLevel > 2)
+                        errs() << "Skipping multivariant generation for " << kv.first << "\n";
+                    continue;
+                }
 
                 if(DebugLevel > 2)
                     errs() << "Creating discrimination harness\n";
