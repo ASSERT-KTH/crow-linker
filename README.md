@@ -5,3 +5,6 @@ This tool creates a multivariant bitcode file. It merges multiple function versi
 ### Details
 
 TODO
+
+### Notes
+- It uses llvm version 11.x

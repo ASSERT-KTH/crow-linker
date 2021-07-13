@@ -24,10 +24,12 @@
 #include <system_error>
 #include "llvm/Linker/Linker.h"
 #include <llvm/IRReader/IRReader.h>
+#include <future>
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include "common/Common.h"
 #include "instrumentor/Instrumentor.h"
 #include "discriminator/Discriminator.h"
 
@@ -46,6 +48,8 @@ extern bool MergeFunctionAsSCases;
 /* Instrumentor options */
 extern bool InstrumentFunction;
 extern bool InstrumentBB;
+extern bool NoInline;
+extern bool AggressiveNoInline;
 
 static cl::opt<std::string> InputFilename(cl::Positional, cl::desc("<original bitcode>"), cl::init("-"));
 
@@ -67,7 +71,7 @@ static cl::opt<std::string> FuncSufix("crow-merge-func-sufix",
 static cl::opt<bool> SkipOnError(
         "crow-merge-skip-on-error",
         cl::desc("Skip the merge of a module if error"),
-        cl::init(false));
+        cl::init(true));
 
 
 static cl::opt<bool> NotLookForFunctions(
@@ -82,6 +86,9 @@ static cl::opt<bool>
 static cl::opt<bool>
         InjectOnlyIfDifferent("merge-only-if-different", cl::desc("Add new function only if it is different to the original one"), cl::init(true));
 
+static cl::opt<bool>
+        CompleteReplace("complete-replace", cl::desc("Replace by incoming function if signature match"), cl::init(false));
+
 static cl::opt<unsigned, true> DebugLevelFlag(
         "crow-merge-debug-level",
         cl::desc("Pass devbug level, 0 for none"),
@@ -94,8 +101,19 @@ static unsigned modulesCount = 0;
 static void deinternalize_module(Module &M, bool saveBackup=false){
     // For functions
     for(auto &F: M){
-        if(saveBackup)
+        if(saveBackup) {
             backupLinkage4Functions[F.getName().str()] = F.getLinkage();
+
+            if (DebugLevel > 3)
+                errs() << "Saving linkage for " << F.getName() << "\n";
+
+            std::string originalName;
+            llvm::raw_string_ostream originalNameOutput(originalName);
+            originalNameOutput << F.getName().str() << "_original";
+            // Ok, saving original just in case
+            backupLinkage4Functions[originalName] = F.getLinkage();
+
+        }
         F.setLinkage(GlobalValue::CommonLinkage);
     }
 
@@ -112,7 +130,7 @@ static void deinternalize_module(Module &M, bool saveBackup=false){
 static std::set<size_t> moduleFunctionHashes;
 static std::hash<std::string> hasher;
 
-static bool is_same_func(std::string function_name, std::string module_file, bool saveIfNotIn=true){
+static bool is_same_func(std::string function_name, std::string module_file, bool saveIfNotIn=true, size_t worker=0){
 
     LLVMContext context;
     SMDiagnostic error;
@@ -124,16 +142,22 @@ static bool is_same_func(std::string function_name, std::string module_file, boo
 
     std::string fObjectDump;
     llvm::raw_string_ostream fObjectDumpSS(fObjectDump);
+    // TODO Avoid function name
     fObjectDumpSS << *fObject;
+
+    if(DebugLevel > 2)
+        errs() << "Hashing " << function_name << " " << module_file << " size " << fObjectDump.size() << " w:" << worker <<  "\n";
 
     size_t hash = hasher(fObjectDump);
 
     if(moduleFunctionHashes.count(hash)){ // Already exist
+        errs() <<  function_name << " already exist in " << module_file  << " w:" << worker <<  "\n";;
+
         return true;
     }
 
-    if(DebugLevel > 1) {
-        errs() << "Saving variant for " << function_name << " " << module_file << " hash " << hash << "\n";
+    if(DebugLevel > 2) {
+        errs() << "Saving variant for " << function_name << " " << module_file << " hash " << hash << " w:" << worker <<  "\n";;
 
         if(DebugLevel > 4){
             errs() << fObjectDump << "\n";
@@ -142,6 +166,10 @@ static bool is_same_func(std::string function_name, std::string module_file, boo
 
 
     moduleFunctionHashes.insert(hash);
+
+    if(DebugLevel > 2)
+        errs() << "Function " << function_name << " " << module_file << " inserted  w:" << worker <<  "\n";
+
     return false;
 }
 
@@ -149,8 +177,11 @@ static void restore_linkage(Module &M){
 
     // For functions
     for(auto &F: M){
-        if(backupLinkage4Functions.count(F.getName().str()))
+        if(backupLinkage4Functions.count(F.getName().str())) {
+            if(DebugLevel > 3)
+                errs() << "Restoring linkage for " << F.getName() << "\n";
             F.setLinkage(backupLinkage4Functions[F.getName().str()]);
+        }
     }
 
     // For globals
@@ -188,6 +219,67 @@ static void addVariant(std::string &original, std::string &variantName){
 }
 
 
+static cl::opt<unsigned> ParallelWorkers(
+        "parallel-workers",
+        cl::desc("Number of paralleling inferring to get valid replacements"),
+        cl::init(1200)); // if the cunk_size is less than 1000, do the saving
+
+template<typename Iterator>
+typename std::iterator_traits<Iterator>::value_type
+save_init_functions_in_parallel(unsigned level_in, Iterator in, Iterator end, unsigned size){
+    if(level_in == ParallelWorkers){
+        errs() << " " << std::addressof(in) << " " << std::addressof(end)  << "\n";
+
+    }else{
+        unsigned middle = size/2;
+        save_init_functions_in_parallel(level_in + 1, in, std::next(in, middle), middle);
+        save_init_functions_in_parallel(level_in + 1, std::next(in, middle), end, size - middle);
+    }
+}
+
+template<typename Iterator,typename Func>
+void parallel_for_each(Iterator first,Iterator last,Func f)
+{
+    ptrdiff_t const range_length=std::distance(first,last);
+    //if(!range_length)
+    //    return;
+    if(range_length <= ParallelWorkers)
+    {
+        // errs() << "\nCalling f "<< std::addressof(first) << " " << range_length << "\n";
+        unsigned it = 0;
+        for(auto i = first; i != last; i++ ){
+            f(*i, it++);
+        }
+        return;
+    }
+
+    //errs() << "\nSpliting "<< range_length << "\n";
+    Iterator const mid=std::next(first,(range_length/2));
+
+    std::future<void> bgtask = std::async(&parallel_for_each<Iterator,Func>,first,mid,f);
+    parallel_for_each(mid,last,f);
+    bgtask.get();
+    // bgtask.wait();
+}
+
+void save_init_functions(Module& bitcode){
+    if(ParallelWorkers > 1) {
+        // TODO, set limits for asyncs
+        errs() << "Hashing functions in parallel: " << bitcode.size() << "\n";
+        parallel_for_each(
+                bitcode.begin(),
+                bitcode.end(),
+                [](auto &&function, unsigned w) {
+                    is_same_func(function.getName().str(), InputFilename, true, w );
+                }
+        );
+    }else{
+        for(auto &F: bitcode){
+            is_same_func(F.getName().str(), InputFilename);
+        }
+    }
+}
+
 int main(int argc, const char **argv) {
 
     // General stats
@@ -198,7 +290,11 @@ int main(int argc, const char **argv) {
     LLVMContext context;
     SMDiagnostic error;
 
+    errs() << "Parsing original bitcode " << InputFilename <<"\n";
+
     auto bitcode = parseIRFile(InputFilename, error, context);
+
+    errs() << "Creating linker " << error.getMessage() <<"\n";
 
     Linker linker(*bitcode);
 
@@ -207,24 +303,26 @@ int main(int argc, const char **argv) {
         errs() << "Function count " << FunctionNames.size() << "\n";
     }
     // Deinternalize functions
-    deinternalize_module(*bitcode, /*save linkage as backup*/ true);
+    if(!CompleteReplace)
+        deinternalize_module(*bitcode, /*save linkage as backup*/ true);
+
+
 
     //
     if(DebugLevel > 1) {
-        errs() << "Hashing original functions" << BCFiles.size() << "\n";
+        errs() << "Hashing original functions " << BCFiles.size() << "\n";
     }
 
-    for(auto &F: *bitcode){
-        // Save original functions and globals
-        is_same_func(F.getName().str(), InputFilename);
-    }
+    save_init_functions(*bitcode);
+
+    errs() << "Injecting variants from " << BCFiles.size() << " modules\n";
 
     // Declare _cb71P5H47J3A(i: i32) -> void
     if(DebugLevel > 2)
         errs() << "Injecting instrumentation callback\n";
 
     Function * fCb = nullptr;
-    if(InstrumentFunction){
+    if(InstrumentFunction || InstrumentBB){
         fCb =  declare_function_instrument_cb(*bitcode, context);
     }
 
@@ -238,7 +336,12 @@ int main(int argc, const char **argv) {
     if(DebugLevel > 2)
         errs() << "Merging modules\n";
 
+    int c = 0;
+    auto start_at = std::chrono::system_clock::now();
+
     for(auto &module: BCFiles) {
+        auto delta = std::chrono::system_clock::now() - start_at;
+        outs() << "\r" << module << " " << c++ << "/" << BCFiles.size() << " since " << delta.count()/1000000 << "s " ;
 
         if (DebugLevel > 3)
             errs() << "Merging module " << module << "\n";
@@ -248,17 +351,17 @@ int main(int argc, const char **argv) {
             if (DebugLevel > 1)
                 errs() << "Module " << module << " does not exist\n";
 
-            if (!SkipOnError) {
-                llvm::report_fatal_error("Module " + module + " not found !");
-            }
-
             continue; // continue since the module does not exist
         }
 
         auto toMergeModule = parseIRFile(module, error, context);
 
-        deinternalize_module(*toMergeModule);
+
+        if(!CompleteReplace)
+            deinternalize_module(*toMergeModule);
+
         std::vector<std::string> toMergeFunctions;
+
 
         if (!NotLookForFunctions && !FunctionNames.empty()) {
 
@@ -289,15 +392,19 @@ int main(int argc, const char **argv) {
         }
 
 
+
+        outs() << " f count " << toMergeFunctions.size() << "                    ";
+        if (DebugLevel > 1)
+            errs() << " Merging module " << module << "\n";
         for (auto &fname : toMergeFunctions) {
 
-            if (DebugLevel > 1)
+            if (DebugLevel > 2)
                 errs() << "Adding function " << fname << " from module " << module << "\n";
 
             if (fname.empty())
                 continue;
 
-            if (DebugLevel > 1)
+            if (DebugLevel > 2)
                 errs() << "Getting function object" << "\n";
 
             auto *fObject = toMergeModule->getFunction(fname);
@@ -308,17 +415,28 @@ int main(int argc, const char **argv) {
             if (fObject == NULL || fObject->isDeclaration())
                 continue;
 
-            if (DebugLevel > 1)
+            if (DebugLevel > 2)
                 errs() << "\tMerging function " << fname << "\n";
+
+            // replace by variant if signature is the same
+
+            if(CompleteReplace){
+
+                if (DebugLevel > 2)
+                    errs() << "\t Relying on override flag to override original function" << "\n";
+                // check that linker override flag is set
+
+                continue;
+            }
 
             if (InjectOnlyIfDifferent) {
 
-                if (DebugLevel > 1)
+                if (DebugLevel > 2)
                     errs() << "\t Cheking for identical function" << "\n";
 
                 if (is_same_func(fname, module)) {
 
-                    if (DebugLevel > 0)
+                    if (DebugLevel > 2)
                         errs() << "\t Removing identical function " << fname << " in " << module << "\n";
 
                     continue;
@@ -339,10 +457,18 @@ int main(int argc, const char **argv) {
             // Change function name
             fObject->setName(newNameOutput.str());
 
+            variantsMap4Instrumentation.insert_or_assign(fObject->getName().str(), 1);
+
+            errs() << "Variants count " << variantsMap4Instrumentation.size() << "\n";
+            if(NoInline){
+                fObject->addFnAttr(Attribute::NoInline);
+            }
+
             if (DebugLevel > 2)
                 errs() << "Ready to merge " << newNameOutput.str() << "\n";
 
-            outs() << newNameOutput.str() << "\n";
+            if (DebugLevel > 2)
+                errs() << newNameOutput.str() << "\n";
             added++;
 
             auto original = bitcode->getFunction(fname);
@@ -360,14 +486,25 @@ int main(int argc, const char **argv) {
     }
 
 
-    crow_linker::merge_variants(*bitcode, context, origingalVariantsMap);
+    crow_linker::merge_variants(*bitcode, context, origingalVariantsMap, variantsMap4Instrumentation);
     // Restore initial function and global linkage
-    restore_linkage(*bitcode);
 
-    crow_linker::instrument_functions(fCb, *bitcode);
+    if(!CompleteReplace)
+        restore_linkage(*bitcode);
+
+    crow_linker::instrument_functions(fCb, *bitcode, variantsMap4Instrumentation);
+
+    if(NoInline){
+        // Annotate all functions with no inline allowed
+        for(auto &F: *bitcode){
+            F.addFnAttr(Attribute::NoInline);
+        }
+    }
 
     std::error_code EC;
-    llvm::raw_fd_ostream OS(OutFileName, EC, llvm::sys::fs::F_None);
+    llvm::raw_fd_ostream OS(OutFileName, EC);
+
+
     WriteBitcodeToFile(*bitcode, OS);
     OS.flush();
 

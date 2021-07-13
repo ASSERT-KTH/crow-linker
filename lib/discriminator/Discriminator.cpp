@@ -10,6 +10,8 @@ extern unsigned DebugLevel;
 std::string MergeFunctionSuffix;
 bool MergeFunctionAsPtr;
 bool MergeFunctionAsSCases;
+bool NoInline;
+bool AggressiveNoInline;
 std::string DiscrminatorCallbackName;
 
 namespace crow_linker {
@@ -41,6 +43,19 @@ namespace crow_linker {
 
             , cl::init(false));
 
+
+    static cl::opt<bool, /*ExternalStorage=*/ true> NoInlineFlag("variants-no-inline",
+                                                                           cl::desc("Annotate variant functions to avoid inlining")
+            , cl::location(NoInline)
+            , cl::init(false));
+
+    static cl::opt<bool, /*ExternalStorage=*/ true> AggressiveNoInlineFlag("aggressive-no-inline",
+                                                                 cl::desc("Annotate all functions to avoid inlining")
+            , cl::location(AggressiveNoInline)
+            , cl::init(false));
+
+
+
     static void printVariantsMap(){
         for(auto &key: origingalVariantsMap){
             errs() << key.first << ": " << key.second.size() + 1 << " " << &key << "\n";
@@ -57,6 +72,7 @@ namespace crow_linker {
     }
 
     void create_switch_case_variant(Function *callee,Module &M, LLVMContext &context, Function& original, Function& discrminate, std::vector<std::string> &variants){
+
 
 
         unsigned IDX = 0;
@@ -84,8 +100,12 @@ namespace crow_linker {
         for (auto &Arg : callee->args()) {
             Values.push_back(&Arg);
         }
+        auto name = original.getName().str();
 
-        errs() << "Finishing the switch case for " << original.getName() << ". Final size " << variants.size() + 1 << "\n";
+        variantsMap4Instrumentation.insert_or_assign(name, 1); // add dispatcher
+
+        errs() << "Finishing the switch case for " << name << ". Final size " << variants.size() + 1 << "\n";
+        errs() << "size " << variantsMap4Instrumentation.size() << "\n";
 
         std::vector<BasicBlock*> bbs;
         for(auto &variant: variants) {
@@ -221,7 +241,7 @@ namespace crow_linker {
         }
 
         //elementPtr->dump();
-        element->dump();
+        //element->dump();
 
 
         //auto cast = llvm::dyn_cast<Function*>(element);
@@ -232,14 +252,14 @@ namespace crow_linker {
         );
         //errs() << element << "\n";
 
-        fCall->dump();
+        //fCall->dump();
 
         Builder.CreateRet(fCall);
 
     }
 
 
-    Function* declare_function_discriminator(Module &M, LLVMContext &context, std::string originalName, Function& discrminate, std::vector<std::string> &variants){
+    Function* declare_function_discriminator(Module &M, LLVMContext &context, std::string originalName, Function& discrminate, std::vector<std::string> &variants, std::map<std::string, char> &variantsMap){
 
         auto original = M.getFunction(originalName);
 
@@ -256,10 +276,14 @@ namespace crow_linker {
         FunctionType *tpe = original->getFunctionType();
         Function *callee = Function::Create(tpe, linkage, newName, M);
 
+        variantsMap[newName] = 1;// original function is also a variant
+
         if(MergeFunctionAsSCases)
             create_switch_case_variant(callee, M, context, *original, discrminate, variants);
-        if(MergeFunctionAsPtr)
-            create_switch_case_variant(callee, M, context, *original, discrminate, variants);
+        if(MergeFunctionAsPtr){
+            errs() << "Replace calls by indirect calls, TODO \n";
+            exit(1);
+        }
         // TODO create_ptrs_variant(callee, M, context, original, discrminate, variants);
 
         return callee;
@@ -276,6 +300,8 @@ namespace crow_linker {
             // print all map etry count
             errs() << "Defined discrminate function " << "\n";
         }
+
+
         return callee;
     }
 
@@ -310,14 +336,17 @@ namespace crow_linker {
 
                         auto oldCalled = c->getCalledFunction();
 
+                        if(oldCalled == NULL)
+                            continue;
+
                         if(DebugLevel > 3){
                             errs() << "Replacing function call " << oldCalled->getName() << "\n";
                         }
 
-                        if(can_replace(oldCalled, fMap, originalName)){
+                        if( can_replace(oldCalled, fMap, originalName)){
 
                             if(DebugLevel > 3){
-                                c->dump();
+                                //c->dump();
                                 errs() << "Replaced function call " << oldCalled->getName() << "\n";
                             }
 
@@ -330,7 +359,7 @@ namespace crow_linker {
         }
     }
 
-    void merge_variants(Module &bitcode, LLVMContext& context, std::map<std::string, std::vector<std::string>> &fMap){
+    void merge_variants(Module &bitcode, LLVMContext& context, std::map<std::string, std::vector<std::string>> &fMap, std::map<std::string, char> &variantsMap){
 
         if(MergeFunctionAsPtr || MergeFunctionAsSCases){
 
@@ -363,7 +392,7 @@ namespace crow_linker {
                 if(DebugLevel > 2)
                     errs() << "Merging " << kv.first << " " << kv.second.size() <<  "\n";
 
-                auto mergeFunction = declare_function_discriminator(bitcode, context, kv.first, *discriminate, kv.second);
+                auto mergeFunction = declare_function_discriminator(bitcode, context, kv.first, *discriminate, kv.second, variantsMap);
 
                 // rename original function
                 Function *originalFunction = bitcode.getFunction(kv.first);
@@ -373,10 +402,19 @@ namespace crow_linker {
                 originalNameOutput << kv.first << "_original";
                 originalFunction->setName(originalName);
 
+                variantsMap.insert_or_assign(originalName, 1); // The original code is also a variant
+
+                if(NoInline)
+                    originalFunction->addFnAttr( Attribute::NoInline);
+
                 // rename then discriminator function as the original
                 mergeFunction->setName(kv.first);
 
-                // replace all calls to original(variants) to the discriminator
+                variantsMap.insert_or_assign(kv.first, 1); // The dispatcher as well
+
+                // Avoid inlining
+                if(NoInline)
+                    mergeFunction->addFnAttr(Attribute::NoInline);
 
                 if(FullDiversifier){
 

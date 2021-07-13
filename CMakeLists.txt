@@ -11,7 +11,7 @@ endif()
 if (NOT LLVM_BUILD_TYPE)
   set(LLVM_BUILD_TYPE Release)
 endif()
-set(LLVM_CONFIG_EXECUTABLE ${CMAKE_SOURCE_DIR}/third_party/llvm-Release-install/bin/llvm-config)
+set(LLVM_CONFIG_EXECUTABLE /usr/local/opt/llvm/bin/llvm-config)
 if(NOT EXISTS ${LLVM_CONFIG_EXECUTABLE})
   message(FATAL_ERROR "llvm-config could not be found!")
 endif()
@@ -61,7 +61,10 @@ execute_process(
 
 set(PASS_LDFLAGS "${LLVM_LDFLAGS}")
 
-#variable_watch(LLVM_LDFLAGS)
+message(${LLVM_LDFLAGS})
+# string(REPLACE -llibxml2.tbd "" NEW_LLVM_LIBS ${LLVM_LIBS} )
+message(${LLVM_LIBS})
+#string(STRIP ${NEW_LLVM_LIBS} NEW_LLVM_LIBS )
 
 execute_process(
   COMMAND ${LLVM_CONFIG_EXECUTABLE} --bindir
@@ -93,14 +96,15 @@ endif()
 
 include_directories(include "${CMAKE_BINARY_DIR}/include")
 include_directories(include "${LLVM_INCLUDEDIR}")
-variable_watch(LLVM_LIBRARY_DIRS)
+
+# variable_watch(LLVM_LIBRARY_DIRS)
 link_directories(${LLVM_LIBRARY_DIRS})
 
 set(CLANG_CXXFLAGS "")
 set(CLANG_INCLUDEDIR "${LLVM_SRC}/../clang/include" "${LLVM_BUILD}/tools/clang/include")
 
 
-variable_watch(LLVM_LDFLAGS)
+# variable_watch(LLVM_LDFLAGS)
 
 add_definitions(${LLVM_DEFINITIONS})
 
@@ -129,11 +133,17 @@ add_executable(crow-linker
   ${CROW_MERGE_SOURCES}
   tools/crow-linker.cpp)
 
+
+#add_executable(static-mapper
+#        ${CROW_MERGE_SOURCES}
+#        tools/static_mapper.cpp)
+
 set(LLVM_LDFLAGS "${LLVM_LDFLAGS}")
 
-VARIABLE_WATCH(LLVM_LIB_DIR)
+#VARIABLE_WATCH(LLVM_LIB_DIR)
 
 target_link_libraries(crow-linker  ${LLVM_LIBS} ${LLVM_LDFLAGS})
+# target_link_libraries(static-mapper  ${LLVM_LIBS} ${LLVM_LDFLAGS})
 
 
 foreach(target crow-linker)

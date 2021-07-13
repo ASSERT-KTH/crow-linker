@@ -10,6 +10,7 @@ extern unsigned DebugLevel;
 
 bool InstrumentFunction;
 bool InstrumentBB;
+bool InstrumentOnlyVariants;
 
 namespace crow_linker {
 
@@ -25,10 +26,21 @@ namespace crow_linker {
                                    cl::location(InstrumentFunction),
                                    cl::init(false));
 
+    static cl::list<std::string> ToInstrument("instrument-include",
+                                         cl::desc("Functions to include for instrumentation")
+            , cl::ZeroOrMore, cl::CommaSeparated);
+
     static cl::opt<bool, true>
             InstrumentBBFlag("instrument-bb",
                              cl::desc("Instrument basic blocks to construct the call graph. When linking ensure that a function _cb(i: i32) exist"),
                              cl::location(InstrumentBB),
+                             cl::init(false));
+
+
+    static cl::opt<bool, true>
+            InstrumentOnlyVariantsFlag("instrument-only-variants",
+                             cl::desc("Instrument only variants to detect calling"),
+                             cl::location(InstrumentOnlyVariants),
                              cl::init(false));
 
     static cl::opt<std::string> InstrumentCallbackName("callback-function-name",
@@ -38,6 +50,7 @@ namespace crow_linker {
 
 
     Function* declare_function_instrument_cb(Module &M, LLVMContext &context){
+
 
         std::vector<Type*> args(1,
                                 Type::getInt32Ty(context));
@@ -54,10 +67,10 @@ namespace crow_linker {
 
         if(DebugLevel > 2) {
             errs() << "Instrumenting ";
-            BB->dump();
+            //BB->dump();
         }
         // Construct call
-        IRBuilder builder(BB);
+        IRBuilder<> builder(BB);
         if (DebugLevel > 2)
             errs() << "Constructing call for " << BB->getParent()->getName() << " isDeclaration: " << BB->getParent()->isDeclaration()  << "\n";
 
@@ -74,10 +87,16 @@ namespace crow_linker {
         return instrumentId - 1;
     }
 
-    void instrument_functions(Function* fCb, Module &bitcode){
+    void instrument_functions(Function* fCb, Module &bitcode, std::map<std::string, char> &variantsMap){
         // Instrument for callgraph if needed
         if((InstrumentFunction || InstrumentBB) && fCb){
             instrumentId = StartIdAt;
+            if(DebugLevel > 0)
+                errs() << "Variants map size " << variantsMap.size() << "\n" ;
+            // Add the optional instrumentation options to the map
+
+            for(auto &name: ToInstrument)
+                variantsMap.insert_or_assign(name, 1);
 
             if(DebugLevel > 2)
                 errs() << "Instrumenting functions for callgraph"  << "\n";
@@ -88,6 +107,17 @@ namespace crow_linker {
                     if (DebugLevel > 2)
                         errs() << F.getName() << "Instrumenting basic blocks" << "\n";
 
+                    // FILTER, if instrument only dispatchers and variants
+                    if(InstrumentOnlyVariants){
+                        auto name = F.getName().str();
+
+                        if(variantsMap.count(name) == 0){ // the function should not be instrumented
+
+                            if (DebugLevel > 2)
+                                errs() << name << " is not a  variant" << "\n";
+                            continue;
+                        }
+                    }
                     for(auto &BBA: F){
                         // Instrument all BB
                         int id = instrument_BB(&BBA, fCb);
