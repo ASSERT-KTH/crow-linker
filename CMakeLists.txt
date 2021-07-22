@@ -134,19 +134,19 @@ add_executable(crow-linker
   tools/crow-linker.cpp)
 
 
-#add_executable(static-mapper
-#        ${CROW_MERGE_SOURCES}
-#        tools/static_mapper.cpp)
+add_executable(static-mapper
+        ${CROW_MERGE_SOURCES}
+        tools/static_mapper.cpp)
 
 set(LLVM_LDFLAGS "${LLVM_LDFLAGS}")
 
 #VARIABLE_WATCH(LLVM_LIB_DIR)
 
 target_link_libraries(crow-linker  ${LLVM_LIBS} ${LLVM_LDFLAGS})
-# target_link_libraries(static-mapper  ${LLVM_LIBS} ${LLVM_LDFLAGS})
+target_link_libraries(static-mapper  ${LLVM_LIBS} ${LLVM_LDFLAGS})
 
 
-foreach(target crow-linker)
+foreach(target crow-linker static-mapper )
   set_target_properties(${target} PROPERTIES COMPILE_FLAGS "${LLVM_CXXFLAGS}")
   target_include_directories(${target} PRIVATE "${LLVM_INCLUDEDIR}")
 endforeach()

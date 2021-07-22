@@ -1,0 +1,1 @@
+../build/signature-extractor allinone.multivariant.bc --funcname="sodium_bin2base64"

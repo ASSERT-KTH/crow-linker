@@ -121,16 +121,17 @@ int main(int argc, const char **argv) {
 
     // Create the edges for the call graph
     for(auto &F: *bitcode){
-
-        OutDegree[F.getName().str()] = 0;
+        edges_file << F.getName().str() << "\n";
+           OutDegree[F.getName().str()] = 0;
         // Call graph
         for(auto &BB: F){
+            int index = 0;
             for(auto inst = BB.begin(); inst != BB.end(); ++inst) {
                 if(isa<CallInst>(inst)) {
                     auto call = cast<CallInst>(inst);
 
                     if(call->getCalledFunction()) {
-                        edges_file << F.getName().str() << "," << call->getCalledFunction()->getName().str() << "\n";
+                        edges_file << "->" << call->getCalledFunction()->getName().str() << "\n";
                         count_of_direct_calls++;
                         OutDegree[F.getName().str()]++;
                     }
@@ -151,7 +152,7 @@ int main(int argc, const char **argv) {
 
                         // !UseIndirectAsUndefinedNode && !UseIndirectCallsToAllNodes && !DoNotUseIndirectCalls => Do nothing
 
-                        call->dump();
+                        //call->dump();
                         auto callvar = call->getCalledOperand();
                         errs() << callvar->getName() << " ";
                         errs() << "It is an indirect call, skipping since the option is to remove indirect calls \n";
